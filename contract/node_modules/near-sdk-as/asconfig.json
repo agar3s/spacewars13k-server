@@ -1,0 +1,17 @@
+{
+  "targets": {
+    "release": {
+      "optimizeLevel": 3,
+      "shrinkLevel": 3
+    },
+    "debug": {
+      "debug": true
+    }
+  },
+  "options": {
+    "runtime": "none",
+    "transform": ["visitor-as/dist/examples/includeBytesTransform.js", "near-sdk-bindgen", "visitor-as/dist/examples/exportAs.js"]
+  },
+  "entries": ["./assembly/bindgen.ts"]
+  
+}
