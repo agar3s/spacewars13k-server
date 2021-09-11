@@ -217,8 +217,8 @@ export function getPlayer (id:u8):Player|null {
   return player;
 };
 
-export function testAlgo(max:u32):u32 {
-  return randomNum(max);
+export function testAlgo2(maxz:u32):u32 {
+  return maxz;
 };
 
 
@@ -379,12 +379,7 @@ function battle (indexPlayerA:u8, indexPlayerB:u8, round:u8): void {
 function solveCards (cardA:u8, cardB:u8): i8 {
   if (cardA === cardB) return 0;
   if (cardA === 0 && cardB === 1) return 1;
-  if (cardA === 0 && cardB === 2) return -1;
-  if (cardA === 1 && cardB === 0) return -1;
   if (cardA === 1 && cardB === 2) return 1;
   if (cardA === 2 && cardB === 0) return 1;
-  if (cardA === 2 && cardB === 1) return -1;
-  return 0;
+  return -1;
 };
-
-newGame();
