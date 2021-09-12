@@ -22,10 +22,38 @@ export class Player {
   id: u8=0;
   account: string="";
   //position,
-  ship: u32=0;
+  ship: u16=0;
   hand: u8[]=[ 0, 1, 2];
   cards: u8[]=[];
   //log,
   state: u8=<u8>PLAYER_STATES.JOINED;
   wins: u8=0;
 };
+
+@nearBindgen
+export class GameAccount {
+  ships: u16[]=[];
+  credits: u8=0;
+  player: Player|null=null;
+  inQueue: i16=-1;
+};
+
+@nearBindgen
+export class Game {
+  id: u16=0;
+  state: u8=0;
+  totalPlayers: u8=0;
+  turn: u8=0;
+};
+
+@nearBindgen
+export class BattleLogRecord {
+  playerA:u8 = 0;
+  playerB:u8 = 0;
+  shipA:u16 = 0;
+  shipB:u16 = 0;
+  cardsA:u8[] = [];
+  cardsB:u8[] = [];
+  winner:u8 = 0;
+  rounds:u8[][][] = [];
+}

@@ -1,4 +1,4 @@
-const CONTRACT_NAME = process.env.CONTRACT_NAME ||'spaceWarsNear'
+const CONTRACT_NAME = 'spacewars.neuromancer.testnet';
 
 function getConfig(env) {
   switch (env) {
