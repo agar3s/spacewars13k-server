@@ -197,7 +197,7 @@ export function startGame():void {
     logging.log('Game is not in Lobby STATE');
     return;
   }
-  if (players.length < MIN_PLAYERS){
+  if (accountsQueue.length < MIN_PLAYERS){
     logging.log('There are not enough players to start the game');
     return;
   }
@@ -226,7 +226,7 @@ export function startGame():void {
     alivePlayers.push(player.id);
     accountToPlayer.set(account_id, player.id);
 
-    logging.log(`player ${ player.account }/${ player.id } has ship: ${ player.ship } with cards: ${ player.cards }`);
+    //logging.log('player ' + player.account + ' ' + player.id +' has ship: ' + player.ship + ' with cards: ' + player.cards);
   }
 
   newTurn();
@@ -274,6 +274,7 @@ export function setHand(hand:u8[]):void {
     playersReady += 1;
     storage.set('playersReady', playersReady);
   }
+  players[player.id] = player;
   /*if (playersReady === alivePlayers.length) {
     solveTurn();
   }*/
@@ -292,16 +293,22 @@ export function solveTurn():void {
     readyPlayers.push(alivePlayers[i]);
   }
   readyPlayers.sort(randomSort);
+  logging.log(readyPlayers);
+  logging.log(readyPlayers.length);
   // remove old battlelogs
   resetBattleLogs();
+  logging.log('setting up the battle');
   for (let i = 0; i < readyPlayers.length; i+=2) {
-    if (!readyPlayers[i+1]) break;
+    if (isNaN(readyPlayers[i+1])) break;
     battle(readyPlayers[i], readyPlayers[i + 1]);
   }
+
   // reset alive players
+  logging.log(alivePlayers);
   for (let index = alivePlayers.length - 1; index >= 0; index--) {
     alivePlayers.pop();
   }
+
   // reassign alive players
   for (let i = 0; i< readyPlayers.length; i+=1) {
     let playerIndex = readyPlayers[i];
@@ -363,11 +370,16 @@ function assignShip (account: string): u16 {
 function randomHand (index:u8): void {
   let player = players[index];
   player.hand = player.cards.map<u8>((card, index) => <u8>index).sort(randomSort).slice(0, 3);
+  players[player.id] = player;
 };
 
 function sortCurrentHand (index:u8): void {
   let player = players[index];
+  logging.log('player.hand at sort?');
+  logging.log(player.hand);
   player.hand.sort(randomSort);
+  logging.log(player.hand);
+  players[player.id] = player;
 };
 
 function newTurn (): void {
@@ -378,7 +390,9 @@ function newTurn (): void {
   for (let i = 0; i < alivePlayers.length; i++) {
     const playerIndex = alivePlayers[i];
     randomHand(playerIndex);
-    players[playerIndex].state = <u8>PLAYER_STATES.WAIT;
+    let player = players[playerIndex];
+    player.state = <u8>PLAYER_STATES.WAIT;
+    players[player.id] = player;
   }
   playersReady = 0;
   storage.set('playersReady', playersReady);
@@ -389,7 +403,6 @@ function pickRandomCard (index:u8): u8 {
   let player = players[index];
   const size:u8 = <u8>player.cards.length;
   const randomPick = randomShortNum(size);
-  // logging.log(`random card pick ${ randomPick } => ${ player.cards[randomPick] }`);
   return player.cards[randomPick];
 };
 
@@ -406,7 +419,8 @@ function transferShipToAccount (account_id:string, ship:u16): void {
 function closeGame (): void {
   logging.log('ENDING GAME');
   const winnerPlayerIndex = alivePlayers[0];
-  logging.log(`${ winnerPlayerIndex } is the winner`);
+  const winnerPlayer = players[winnerPlayerIndex];
+  logging.log(winnerPlayer.account + ' is the winner');
   // free dead players
   for (let i = 0; i < players.length; i++) {
     const player = players[i];
@@ -430,31 +444,33 @@ function battle (indexPlayerA:u8, indexPlayerB:u8):void {
   battleLog.playerB = indexPlayerB;
   battleLog.shipA = playerA.ship;
   battleLog.shipB = playerB.ship;
-  battleLog.cardsA = playerA.cards;
-  battleLog.cardsB = playerB.cards;
+  battleLog.cardsA = playerA.cards.slice(0);
+  battleLog.cardsB = playerB.cards.slice(0);
 
   let scores = [0, 0];
   let battleRound = 0;
-  let handA:u8[];
-  let handB:u8[];
   while (scores[0]<2&&scores[1]<2) {
     if (battleRound>10) break;
+    logging.log('battle round');
+    logging.log(battleRound);
+    let handA:u8[];
+    let handB:u8[];
     switch (battleRound) {
       case 0:
-        handA = playerA.hand;
-        handB = playerB.hand;
+        handA = playerA.hand.slice(0);
+        handB = playerB.hand.slice(0);
       break;
       case 1:
         sortCurrentHand(indexPlayerA);
         sortCurrentHand(indexPlayerB);
-        handA = playerA.hand;
-        handB = playerB.hand;
+        handA = players[indexPlayerA].hand.slice(0);
+        handB = players[indexPlayerB].hand.slice(0);
       break;
       case 2: 
         randomHand(indexPlayerA);
         randomHand(indexPlayerB);
-        handA = playerA.hand;
-        handB = playerB.hand;
+        handA = players[indexPlayerA].hand.slice(0);
+        handB = players[indexPlayerB].hand.slice(0);
       break;
         default:
           handA = [randomShortNum(<u8>playerA.cards.length)];
@@ -476,17 +492,18 @@ function battle (indexPlayerA:u8, indexPlayerB:u8):void {
   
   battleLog.winner = scores[0]>scores[1]?indexPlayerA:indexPlayerB;
   if (scores[0]>scores[1]) {
-    logging.log(`player ${ indexPlayerA } wins`);
+    //logging.log('player ' + indexPlayerA + ' wins');
     playerA.wins += 1;
     playerA.cards.push(pickRandomCard(indexPlayerB));
     playerB.state = <u8>PLAYER_STATES.DEAD;
   } else {
-    logging.log(`player ${ indexPlayerB } wins`);
+    //logging.log('player ' + indexPlayerB + ' wins');
     playerB.wins += 1;
     playerB.cards.push(pickRandomCard(indexPlayerA));
     playerA.state = <u8>PLAYER_STATES.DEAD;
   }
-
+  players[playerA.id] = playerA;
+  players[playerB.id] = playerB;
   saveBattleLog(battleLog);
 }
 
@@ -564,11 +581,23 @@ function validateAdmin (): bool {
   return Context.sender == Context.contractName;
 }
 
-
-export function provisionShips (): void {
+export function adminCall (): void {
   assert(validateAdmin(), 'You are not authorized to run this function');
-  for(let i=0;i<13*1024;i++) {
+}
+
+export function provisionShips (start:u32, end:u32): void {
+  assert(validateAdmin(), 'You are not authorized to run this function');
+  for(let i=start;i<end;i++) {
     availableShips.push(<i16>i);
   }
+}
+export function getAvailableShips ():u16[] {
+  assert(validateAdmin(), 'You are not authorized to run this function');
+  const mapp:u16[] = [];
+  for (let index = 50; index < 150; index++) {
+    const element = availableShips[index];
+    mapp.push(element);
+  }
+  return mapp;
 }
 
