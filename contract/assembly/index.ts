@@ -76,8 +76,8 @@ const battleLog = new PersistentMap<string, BattleLogRecord>("battleLog");
 
 let GAME_STATE:u8 = 4;
 let playersReady = 0;
-const MIN_PLAYERS = 2;
-const MAX_PLAYERS = 64;
+const MIN_PLAYERS = 4;
+const MAX_PLAYERS = 16;
 
 // 0 = ROCK
 // 1 = PAPER
@@ -207,9 +207,7 @@ export function startGame():void {
   // is this code needed? maybe at the moment of starting the game
   // I can remove all the people from the accountsQueue and 
   // joining here.
-  const gameNumber:u16 = storage.getPrimitive<u16>('GAME_ID', 0);
-  storage.set('GAME_ID', gameNumber + 1);
-  storage.set('GAME_TURN', 0);
+
 
   for (let i = accountsQueue.length - 1; i >= 0 && players.length < MAX_PLAYERS; i--) {
     const account_id = accountsQueue.popBack();
@@ -218,7 +216,7 @@ export function startGame():void {
     player.account = account_id;
     logging.log(player.account + ' joins the game');
     player.ship = assignShip(player.account);
-    player.cards = [0, 1, 2, randomShortNum(9)];
+    player.arsenal = [0, 1, 2, randomShortNum(9)];
     player.wins = 0;
     player.state = <u8>PLAYER_STATES.SETUP;
     players.push(player);
@@ -233,28 +231,28 @@ export function startGame():void {
 };
 
 // players set their hands
-export function setHand(hand:u8[]):void {
+export function setHand(hand:u8[]):u8 {
   if (getGameState() !== GAME_STATES.WAIT_PLAYERS) {
     logging.log('hand can\'t be set now');
-    return;
+    return 0;
   }
   const account_id = Context.sender;
   if (!accountToPlayer.contains(account_id)) {
     logging.log('this player is not playing');
-    return;
+    return 1;
   }
   let playerIndex = accountToPlayer.getSome(account_id);
   let player = players[playerIndex];
   if (player.state === PLAYER_STATES.DEAD) {
     logging.log('this player is not longer alive in this game');
-    return;
+    return 2;
   }
   if (hand.length !== 3) {
     logging.log('hand must contain 3 cards exactly');
-    return;
+    return 3;
   }
 
-  const totalCards: u8 = <u8>player.cards.length;
+  const totalCards: u8 = <u8>player.arsenal.length;
   let validatedHand: u8[] = [];
   for (let i=0; i<hand.length; i++) {
     let element = hand[i];
@@ -265,7 +263,7 @@ export function setHand(hand:u8[]):void {
 
   if (validatedHand.length !== 3){
     logging.log('hand can\'t contain duplicated cards');
-    return;
+    return 4;
   }
   player.hand = hand;
   if (player.state !== PLAYER_STATES.READY) {
@@ -275,6 +273,7 @@ export function setHand(hand:u8[]):void {
     storage.set('playersReady', playersReady);
   }
   players[player.id] = player;
+  return 5;
   /*if (playersReady === alivePlayers.length) {
     solveTurn();
   }*/
@@ -328,8 +327,9 @@ export function solveTurn():void {
 export function getGame ():Game {
   const game = new Game();
   game.totalPlayers = <u8>alivePlayers.length;
+  game.waitingPlayers = <u8>accountsQueue.length;
   game.id = storage.getPrimitive<u16>('GAME_ID', 0);
-  game.turn = storage.getPrimitive<u8>('GAME_TURN', 1);
+  game.round = storage.getPrimitive<u8>('GAME_TURN', 1);
   game.state = getGameState();
   return game;
 };
@@ -355,6 +355,10 @@ export function newGame (): void {
   }
   storage.set('playersReady', 0);
   setGameState(GAME_STATES.LOBBY);
+  const gameNumber:u16 = storage.getPrimitive<u16>('GAME_ID', 0);
+  storage.set('GAME_ID', gameNumber + 1);
+  storage.set('GAME_TURN', 0);
+  logging.log('new game created: ' + (gameNumber + 1).toString());
 };
 
 function getAvailableShipIndex (): u32 {
@@ -369,7 +373,7 @@ function assignShip (account: string): u16 {
 
 function randomHand (index:u8): void {
   let player = players[index];
-  player.hand = player.cards.map<u8>((card, index) => <u8>index).sort(randomSort).slice(0, 3);
+  player.hand = player.arsenal.map<u8>((card, index) => <u8>index).sort(randomSort).slice(0, 3);
   players[player.id] = player;
 };
 
@@ -401,9 +405,9 @@ function newTurn (): void {
 
 function pickRandomCard (index:u8): u8 {
   let player = players[index];
-  const size:u8 = <u8>player.cards.length;
+  const size:u8 = <u8>player.arsenal.length;
   const randomPick = randomShortNum(size);
-  return player.cards[randomPick];
+  return player.arsenal[randomPick];
 };
 
 function transferShipToAccount (account_id:string, ship:u16): void {
@@ -444,8 +448,8 @@ function battle (indexPlayerA:u8, indexPlayerB:u8):void {
   battleLog.playerB = indexPlayerB;
   battleLog.shipA = playerA.ship;
   battleLog.shipB = playerB.ship;
-  battleLog.cardsA = playerA.cards.slice(0);
-  battleLog.cardsB = playerB.cards.slice(0);
+  battleLog.arsenalA = playerA.arsenal.slice(0);
+  battleLog.arsenalB = playerB.arsenal.slice(0);
 
   let scores = [0, 0];
   let battleRound = 0;
@@ -473,13 +477,13 @@ function battle (indexPlayerA:u8, indexPlayerB:u8):void {
         handB = players[indexPlayerB].hand.slice(0);
       break;
         default:
-          handA = [randomShortNum(<u8>playerA.cards.length)];
-          handB = [randomShortNum(<u8>playerB.cards.length)];
+          handA = [randomShortNum(<u8>playerA.arsenal.length)];
+          handB = [randomShortNum(<u8>playerB.arsenal.length)];
         break;
     }
     let score = 0;
     for (let i=0;i<handA.length;i++) {
-      score += solveCardAbsolute(playerA.cards[handA[i]], playerB.cards[handB[i]]);
+      score += solveCardAbsolute(playerA.arsenal[handA[i]], playerB.arsenal[handB[i]]);
     }
 
     if (score>0) scores[0]++;
@@ -494,12 +498,12 @@ function battle (indexPlayerA:u8, indexPlayerB:u8):void {
   if (scores[0]>scores[1]) {
     //logging.log('player ' + indexPlayerA + ' wins');
     playerA.wins += 1;
-    playerA.cards.push(pickRandomCard(indexPlayerB));
+    playerA.arsenal.push(pickRandomCard(indexPlayerB));
     playerB.state = <u8>PLAYER_STATES.DEAD;
   } else {
     //logging.log('player ' + indexPlayerB + ' wins');
     playerB.wins += 1;
-    playerB.cards.push(pickRandomCard(indexPlayerA));
+    playerB.arsenal.push(pickRandomCard(indexPlayerA));
     playerA.state = <u8>PLAYER_STATES.DEAD;
   }
   players[playerA.id] = playerA;

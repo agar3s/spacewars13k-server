@@ -24,7 +24,7 @@ export class Player {
   //position,
   ship: u16=0;
   hand: u8[]=[ 0, 1, 2];
-  cards: u8[]=[];
+  arsenal: u8[]=[];
   //log,
   state: u8=<u8>PLAYER_STATES.JOINED;
   wins: u8=0;
@@ -43,7 +43,8 @@ export class Game {
   id: u16=0;
   state: u8=0;
   totalPlayers: u8=0;
-  turn: u8=0;
+  waitingPlayers: u8=0;
+  round: u8=0;
 };
 
 @nearBindgen
@@ -52,8 +53,8 @@ export class BattleLogRecord {
   playerB:u8 = 0;
   shipA:u16 = 0;
   shipB:u16 = 0;
-  cardsA:u8[] = [];
-  cardsB:u8[] = [];
+  arsenalA:u8[] = [];
+  arsenalB:u8[] = [];
   winner:u8 = 0;
   rounds:u8[][][] = [];
 }
