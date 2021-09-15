@@ -619,6 +619,70 @@ export function checkBattleLog ():void {
   logging.log(availableShips[availableShips.length-1]);
 }
 
+// BEGIN NFT (NEP-171)
+
+class Token {
+  id: string;
+  owner_id: string;
+};
+
+// Simple transfer. Transfer a given `token_id` from current owner to
+// `receiver_id`.
+//
+// Requirements
+// * Caller of the method must attach a deposit of 1 yoctoⓃ for security purposes
+// * Contract MUST panic if called by someone other than token owner or,
+//   if using Approval Management, one of the approved accounts
+// * `approval_id` is for use with Approval Management extension, see
+//   that document for full explanation.
+// * If using Approval Management, contract MUST nullify approved accounts on
+//   successful transfer.
+//
+// Arguments:
+// * `receiver_id`: the valid NEAR account receiving the token
+// * `token_id`: the token to transfer
+// * `approval_id`: expected approval ID. A number smaller than
+//    2^53, and therefore representable as JSON. See Approval Management
+//    standard for full explanation.
+// * `memo` (optional): for use cases that may benefit from indexing or
+//    providing information for a transfer
+export function nft_transfer(receiver_id: string, token_id: string, approval_id: number|null, memo: string|null):void {
+  assert(u128.from(Context.attachedDeposit) == u128.from(1), 'Requires attached deposit of exactly 1 yoctoNEAR');
+  const sender_id = Context.predecessor;
+  const ship_id:u32 = u32(token_id);
+  assert(shipToAccount.contains(ship_id), 'token not existent');
+  const shipOwner = shipToAccount.getSome(ship_id);
+  assert(shipOwner == sender_id, 'the token owner must call this function');
+  assert(shipOwner != receiver_id, 'the token owner must be different to the receiver');
+  let previousOwnerShips = accountToShips.getSome(shipOwner);
+  const shipIndex = previousOwnerShips.indexOf(ship_id);
+  previousOwnerShips.splice(shipIndex, 1);
+  accountToShips.set(shipOwner, previousOwnerShips);
+  transferShipToAccount(receiver_id, ship_id);
+}
+
+export function nft_token(token_id: string): Token|null {
+  const ship_id:u32 = u32(token_id);
+  if (!shipToAccount.contains(ship_id)) {
+    return { id: token_id, owner_id: Context.contractName };
+  }
+  const shipOwner = shipToAccount.getSome(ship_id);
+
+  return {id: token_id, owner_id: shipOwner};
+}
+export function nft_tokens_for_owner(account_id: string): Set<string> | null {
+  if (!accountToShips.contains(account_id)) {
+    return null;
+  }
+  const ships = accountToShips.getSome(account_id);
+  const tokens = new Set<string>();
+  for (let index = 0; index < ships.length; index++) {
+    tokens.add(ships[index].toString());
+  }
+  return tokens;
+}
+// END NFT (NEP-171)
+
 // croncat experimentation
 export function ping ():void {
   logging.log("creting croncat");
