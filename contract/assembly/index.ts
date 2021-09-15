@@ -24,6 +24,8 @@ import {
 
 import { Context, logging, storage, u128 } from 'near-sdk-as'
 import { Player, GameAccount, Game, GAME_STATES, PLAYER_STATES, BattleLogRecord } from './models';
+import { CroncatAPI } from './crossContracts';
+
 
 // a function to generate random numbers
 function randomNum(max:u32): u32 {
@@ -77,7 +79,9 @@ const battleLog = new PersistentMap<string, BattleLogRecord>("battleLog");
 let GAME_STATE:u8 = 4;
 let playersReady = 0;
 const MIN_PLAYERS = 4;
-const MAX_PLAYERS = 16;
+const MAX_PLAYERS = 8;
+
+const SHIPS_TO_MINT:u16 = 20;
 
 // 0 = ROCK
 // 1 = PAPER
@@ -131,9 +135,6 @@ function checkNewAccount (account_id:string):void {
 @payable
 export function addCredit():u8 {
   const attachedDeposit = Context.attachedDeposit;
-  logging.log(attachedDeposit);
-  logging.log(u128.from('100000000000000000000000'));
-  logging.log(attachedDeposit>=u128.from('100000000000000000000000'));
   assert(attachedDeposit>=u128.from('100000000000000000000000'), 'credit cost 0.1 near or 10**23 yoctoNear');
   const account_id = Context.sender;
   // register this user give 1 free credit
@@ -145,6 +146,7 @@ export function addCredit():u8 {
   }
   // ok, this is the interesting part, how to request money?
   accountCredits.set(account_id, availableCredits + 1);
+  provisionShips(20);
   return availableCredits + 1;
 }
 
@@ -193,6 +195,7 @@ export function joinGame():i8 {
 
 // players decide to start the game ???? review this flow
 export function startGame():void {
+  assert(validateAdmin(), 'You are not authorized to run this function');
   if (getGameState() !== GAME_STATES.LOBBY) {
     logging.log('Game is not in Lobby STATE');
     return;
@@ -281,6 +284,7 @@ export function setHand(hand:u8[]):u8 {
 
 // players ask to solve the next turn
 export function solveTurn():void {
+  assert(validateAdmin(), 'You are not authorized to run this function');
   if (getGameState() !== GAME_STATES.WAIT_PLAYERS) {
     logging.log('game state is not valid to solve this turn');
     return;
@@ -319,6 +323,8 @@ export function solveTurn():void {
   if (alivePlayers.length === 1) {
     closeGame();
   } else {
+    const turn = storage.getPrimitive<u8>('GAME_TURN', 0);
+    storage.set('GAME_TURN', turn+1);
     newTurn();
   }
 };
@@ -329,8 +335,9 @@ export function getGame ():Game {
   game.totalPlayers = <u8>alivePlayers.length;
   game.waitingPlayers = <u8>accountsQueue.length;
   game.id = storage.getPrimitive<u16>('GAME_ID', 0);
-  game.round = storage.getPrimitive<u8>('GAME_TURN', 1);
+  game.round = storage.getPrimitive<u8>('GAME_TURN', 0);
   game.state = getGameState();
+  game.playersReady = storage.getSome<u8>('playersReady');
   return game;
 };
 
@@ -343,8 +350,10 @@ export function getPlayer (id:u8):Player|null {
 
 // aux functions
 export function newGame (): void {
+  assert(validateAdmin(), 'You are not authorized to run this function');
   //if (getGameState() !== GAME_STATES.OVER) return;
   setGameState(GAME_STATES.BUSY);
+  resetBattleLogs();
   for (let index = players.length - 1; index >= 0; index--) {
     const player:Player = players[index];
     accountToPlayer.delete(player.account);
@@ -371,30 +380,28 @@ function assignShip (account: string): u16 {
 };
 
 
-function randomHand (index:u8): void {
+function randomHand (index:u8): u8[] {
   let player = players[index];
-  player.hand = player.arsenal.map<u8>((card, index) => <u8>index).sort(randomSort).slice(0, 3);
-  players[player.id] = player;
+  return player.arsenal.map<u8>((card, index) => <u8>index).sort(randomSort).slice(0, 3);
 };
 
-function sortCurrentHand (index:u8): void {
+function sortCurrentHand (index:u8): u8[] {
   let player = players[index];
   logging.log('player.hand at sort?');
   logging.log(player.hand);
   player.hand.sort(randomSort);
-  logging.log(player.hand);
-  players[player.id] = player;
+  return player.hand;
+  //logging.log(player.hand);
+  //players[player.id] = player;
 };
 
 function newTurn (): void {
   logging.log('new turn');
-  const turn = storage.getPrimitive<u8>('GAME_TURN', 0);
-  storage.set('GAME_TURN', turn+1);
   setGameState(GAME_STATES.WAIT_PLAYERS);
   for (let i = 0; i < alivePlayers.length; i++) {
     const playerIndex = alivePlayers[i];
-    randomHand(playerIndex);
     let player = players[playerIndex];
+    player.hand = randomHand(playerIndex);
     player.state = <u8>PLAYER_STATES.WAIT;
     players[player.id] = player;
   }
@@ -465,16 +472,12 @@ function battle (indexPlayerA:u8, indexPlayerB:u8):void {
         handB = playerB.hand.slice(0);
       break;
       case 1:
-        sortCurrentHand(indexPlayerA);
-        sortCurrentHand(indexPlayerB);
-        handA = players[indexPlayerA].hand.slice(0);
-        handB = players[indexPlayerB].hand.slice(0);
+        handA = sortCurrentHand(indexPlayerA).slice(0);
+        handB = sortCurrentHand(indexPlayerB).slice(0);
       break;
       case 2: 
-        randomHand(indexPlayerA);
-        randomHand(indexPlayerB);
-        handA = players[indexPlayerA].hand.slice(0);
-        handB = players[indexPlayerB].hand.slice(0);
+        handA = randomHand(indexPlayerA);
+        handB = randomHand(indexPlayerB);
       break;
         default:
           handA = [randomShortNum(<u8>playerA.arsenal.length)];
@@ -589,12 +592,18 @@ export function adminCall (): void {
   assert(validateAdmin(), 'You are not authorized to run this function');
 }
 
-export function provisionShips (start:u32, end:u32): void {
-  assert(validateAdmin(), 'You are not authorized to run this function');
-  for(let i=start;i<end;i++) {
+export function provisionShips (ships:u16): void {
+  const from = storage.getPrimitive<u16>('NEXT_SHIP_INDEX', u16(availableShips.length));
+  const max:u16 = 13*1024;
+  assert(from<max, 'max number of ships alreay provisioned');
+  let i:u16 = from;
+  let maxLocal:u16 = (from+ships);
+  for(;i < maxLocal && i < max; i++) {
     availableShips.push(<i16>i);
   }
+  storage.set('NEXT_SHIP_INDEX', i);
 }
+
 export function getAvailableShips ():u16[] {
   assert(validateAdmin(), 'You are not authorized to run this function');
   const mapp:u16[] = [];
@@ -605,3 +614,21 @@ export function getAvailableShips ():u16[] {
   return mapp;
 }
 
+export function checkBattleLog ():void {
+  logging.log(availableShips.length);
+  logging.log(availableShips[availableShips.length-1]);
+}
+
+// croncat experimentation
+export function ping ():void {
+  logging.log("creting croncat");
+  let croncat = new CroncatAPI();
+  logging.log("scheduling");
+  let promise = croncat.ping('pong');
+  logging.log("scheduled");
+  promise.returnAsResult();
+}
+
+export function pong ():void {
+  logging.log('pong');
+}

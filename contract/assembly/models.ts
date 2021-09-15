@@ -1,5 +1,5 @@
 //import { JSON } from "assemblyscript-json";
-
+import { u128 } from "as-bignum";
 export const enum GAME_STATES {
   LOBBY = 1,
   SETUP = 2,
@@ -44,6 +44,7 @@ export class Game {
   state: u8=0;
   totalPlayers: u8=0;
   waitingPlayers: u8=0;
+  playersReady: u8=0;
   round: u8=0;
 };
 
@@ -57,4 +58,16 @@ export class BattleLogRecord {
   arsenalB:u8[] = [];
   winner:u8 = 0;
   rounds:u8[][][] = [];
+}
+
+// croncat model
+@nearBindgen
+export class Task {
+  contract_id: string;
+  function_id: string;
+  cadence: string;
+  recurring: bool;
+  deposit: u128;
+  gas: u128;
+  arguments: u8[];
 }
