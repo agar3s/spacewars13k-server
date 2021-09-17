@@ -16,6 +16,8 @@ import {
   PersistentMap, // implementation of a map you would find in most languages
   PersistentVector, // implementation of an array you would find in most languages
   PersistentDeque, // implementation of a deque (bidirectional queue)
+  PersistentUnorderedMap,
+  util,
 } from "near-sdk-as";
 
 import { 
@@ -23,7 +25,7 @@ import {
 } from "near-sdk-core";
 
 import { Context, logging, storage, u128 } from 'near-sdk-as'
-import { Player, GameAccount, Game, GAME_STATES, PLAYER_STATES, BattleLogRecord } from './models';
+import { Player, GameAccount, Game, GAME_STATES, PLAYER_STATES, BattleLogRecord, Token, NFTMetadata, TokenMetadata } from './models';
 import { CroncatAPI } from './crossContracts';
 
 
@@ -61,7 +63,7 @@ function randomSort(value:u8, index:u8): i32 {
 //const shipToOwner = new PersistentMap<TokenId, AccountId>('a')
 
 // only when the game is finished ? ship owners
-const shipToAccount = new PersistentMap<u32, string>("shipToAccount");
+const shipToAccount = new PersistentMap<u16, string>("shipToAccount");
 const accountToShips = new PersistentMap<string, Array<u16>>("accountToShips");
 
 const availableShips = new PersistentVector<u16>("availableShips");
@@ -76,9 +78,13 @@ const alivePlayers = new PersistentVector<u8>("alivePlayers");
 const accountToLastBattle = new PersistentMap<string, string>("accountToBattle");
 const battleLog = new PersistentMap<string, BattleLogRecord>("battleLog");
 
+// NFT -standard
+export const TokenMetadataById = new PersistentUnorderedMap<string, TokenMetadata>("m");
+//
+
 let GAME_STATE:u8 = 4;
 let playersReady = 0;
-const MIN_PLAYERS = 4;
+const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 8;
 
 const SHIPS_TO_MINT:u16 = 20;
@@ -302,7 +308,7 @@ export function solveTurn():void {
   resetBattleLogs();
   logging.log('setting up the battle');
   for (let i = 0; i < readyPlayers.length; i+=2) {
-    if (isNaN(readyPlayers[i+1])) break;
+    if (i+1>=readyPlayers.length) break;
     battle(readyPlayers[i], readyPlayers[i + 1]);
   }
 
@@ -595,7 +601,7 @@ export function adminCall (): void {
 export function provisionShips (ships:u16): void {
   const from = storage.getPrimitive<u16>('NEXT_SHIP_INDEX', u16(availableShips.length));
   const max:u16 = 13*1024;
-  assert(from<max, 'max number of ships alreay provisioned');
+  assert(from<max, 'max number of ships already provisioned');
   let i:u16 = from;
   let maxLocal:u16 = (from+ships);
   for(;i < maxLocal && i < max; i++) {
@@ -619,12 +625,28 @@ export function checkBattleLog ():void {
   logging.log(availableShips[availableShips.length-1]);
 }
 
+export function getLastWinner (): Token {
+  const token = new Token();
+  for (let i = 0; i< players.length; i+=1) {
+    if (players[i].state !== PLAYER_STATES.DEAD) {
+      token.owner_id = players[i].account;
+      token.id = players[i].ship.toString();
+      break;
+    }
+  }
+  return token;
+}
 // BEGIN NFT (NEP-171)
 
-class Token {
-  id: string;
-  owner_id: string;
-};
+export function init(owner_id: string, metadata: NFTMetadata): void {
+  assert(validateAdmin(), 'You are not authorized to run this function');
+  const Metadata: NFTMetadata = new NFTMetadata(metadata.spec, metadata.name, metadata.symbol, metadata.icon, metadata.base_uri, metadata.reference, metadata.reference_hash);
+  storage.set("n", Metadata);
+}
+
+export function nft_metadata(): NFTMetadata {
+  return storage.getSome<NFTMetadata>("n");
+}
 
 // Simple transfer. Transfer a given `token_id` from current owner to
 // `receiver_id`.
@@ -646,14 +668,15 @@ class Token {
 //    standard for full explanation.
 // * `memo` (optional): for use cases that may benefit from indexing or
 //    providing information for a transfer
-export function nft_transfer(receiver_id: string, token_id: string, approval_id: number|null, memo: string|null):void {
+export function nft_transfer(receiver_id: string, token_id: string, approval_id: u64=0, memo?: string|null):void {
+  assert(validateAdmin(), 'You are not authorized to run this function');
   assert(u128.from(Context.attachedDeposit) == u128.from(1), 'Requires attached deposit of exactly 1 yoctoNEAR');
   const sender_id = Context.predecessor;
-  const ship_id:u32 = u32(token_id);
+  const ship_id:u16 = util.parseFromString<u16>(token_id);
   assert(shipToAccount.contains(ship_id), 'token not existent');
   const shipOwner = shipToAccount.getSome(ship_id);
-  assert(shipOwner == sender_id, 'the token owner must call this function');
-  assert(shipOwner != receiver_id, 'the token owner must be different to the receiver');
+  //assert(shipOwner == sender_id, 'the token owner must call this function');
+  //assert(shipOwner != receiver_id, 'the token owner must be different to the receiver');
   let previousOwnerShips = accountToShips.getSome(shipOwner);
   const shipIndex = previousOwnerShips.indexOf(ship_id);
   previousOwnerShips.splice(shipIndex, 1);
@@ -662,24 +685,65 @@ export function nft_transfer(receiver_id: string, token_id: string, approval_id:
 }
 
 export function nft_token(token_id: string): Token|null {
-  const ship_id:u32 = u32(token_id);
+  logging.log('token id');
+  logging.log(token_id);
+  const ship_id:u16 = util.parseFromString<u16>(token_id);
+  logging.log('ship id');
+  logging.log(ship_id);
+  logging.log(!shipToAccount.contains(ship_id));
   if (!shipToAccount.contains(ship_id)) {
-    return { id: token_id, owner_id: Context.contractName };
+    const metadata:TokenMetadata = TokenMetadataById.getSome(token_id);
+    return { id: token_id, owner_id: Context.contractName, metadata };
   }
   const shipOwner = shipToAccount.getSome(ship_id);
+  logging.log(shipOwner);
+  const metadata:TokenMetadata = TokenMetadataById.getSome(token_id);
+  logging.log(metadata);
 
-  return {id: token_id, owner_id: shipOwner};
+  return {id: token_id, owner_id: shipOwner, metadata};
 }
-export function nft_tokens_for_owner(account_id: string): Set<string> | null {
+
+export function nft_tokens_for_owner(account_id: string): Set<Token> | null {
   if (!accountToShips.contains(account_id)) {
     return null;
   }
   const ships = accountToShips.getSome(account_id);
-  const tokens = new Set<string>();
+  logging.log(ships);
+  const tokens = new Set<Token>();
   for (let index = 0; index < ships.length; index++) {
-    tokens.add(ships[index].toString());
+    const token_id:string = ships[index].toString();
+    if (TokenMetadataById.contains(token_id)) {
+      const metadata:TokenMetadata = TokenMetadataById.getSome(token_id);
+      const token = new Token();
+      token.id = token_id;
+      token.owner_id = account_id;
+      token.metadata = metadata;
+      tokens.add(token);
+      logging.log(token);
+      logging.log(token_id);
+    }
   }
   return tokens;
+}
+export function nft_tokens_for_owner_set(account_id: string): Set<string> | null {
+  if (!accountToShips.contains(account_id)) {
+    return null;
+  }
+  const ships = accountToShips.getSome(account_id);
+  logging.log(ships);
+  const tokens = new Set<string>();
+  for (let index = 0; index < ships.length; index++) {
+    const token_id:string = ships[index].toString();
+    if (TokenMetadataById.contains(token_id)) {
+      tokens.add(token_id);
+    }
+  }
+  return tokens;
+}
+
+export function nft_mint(owner_id: string, token_id: string, metadata: TokenMetadata): void {
+  assert(validateAdmin(), 'You are not authorized to run this function');
+  TokenMetadataById.set(token_id, metadata);
 }
 // END NFT (NEP-171)
 
